@@ -10,7 +10,7 @@ async def main() -> None:
     print("Streaming response:\n")
     async for event in cli.execute_streaming(
         "Count from 1 to 5, one number per line.",
-        bare=True,
+        bare=False,
     ):
         if isinstance(event, TextChunkEvent):
             print(event.text, end="", flush=True)

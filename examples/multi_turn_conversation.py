@@ -6,7 +6,7 @@ from claude_agent import ClaudeCLI, Session
 
 async def main() -> None:
     cli = ClaudeCLI()
-    session = await Session.create(cli, bare=True)
+    session = await Session.create(cli, bare=False)
 
     print("=== Multi-turn conversation ===\n")
 

@@ -11,7 +11,7 @@ async def main() -> None:
             "You are a haiku poet. Every response must be a haiku "
             "(5-7-5 syllable structure). Nothing else."
         ),
-        bare=True,
+        bare=False,
     )
 
     result = await agent.execute("Write a haiku about async Python programming.")

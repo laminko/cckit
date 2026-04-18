@@ -9,7 +9,7 @@ async def main() -> None:
 
     response = await cli.execute(
         "What is 2 + 2? Answer in one line.",
-        bare=True,
+        bare=False,
     )
 
     print("Result:", response.result)

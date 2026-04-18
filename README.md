@@ -6,7 +6,16 @@ An async Python framework that wraps the [Claude Code CLI](https://docs.anthropi
 
 - Python 3.11+
 - [`uv`](https://docs.astral.sh/uv/) for package management
-- The `claude` CLI at `~/.local/bin/claude`, already OAuth-authenticated
+- The `claude` CLI at `~/.local/bin/claude`
+
+### Authentication
+
+The wrapped `claude` CLI needs one of:
+
+- **OAuth** — run `claude login` once. Pass `bare=False` to `ClaudeCLI.execute`, `Session.create`, and any agent constructor (the library's `bare=True` default disables OAuth/keychain reads).
+- **API key** — set `ANTHROPIC_API_KEY`. The default `bare=True` then works as-is.
+
+`ACPSession` ignores this and works with either auth method out of the box.
 
 ## Install
 
@@ -22,7 +31,7 @@ from claude_agent import ClaudeCLI
 
 async def main():
     cli = ClaudeCLI()
-    response = await cli.execute("What is 2 + 2?")
+    response = await cli.execute("What is 2 + 2?", bare=False)
     print(response.result)
 
 asyncio.run(main())
@@ -38,7 +47,7 @@ The library offers two execution paths:
 ### One-shot execution
 
 ```python
-response = await cli.execute("Summarise this file", tools=["Read"], bare=True)
+response = await cli.execute("Summarise this file", tools=["Read"])
 ```
 
 `cli.execute_json(...)` returns the raw JSON dict instead of a `Response`.
@@ -94,16 +103,25 @@ result = await agent.execute("Audit the auth module")
 ### MCP integration
 
 ```python
+from pathlib import Path
 from claude_agent import ClaudeCLI, MCPManager, Session
+
+workspace = str(Path.cwd())
 
 mcp = MCPManager()
 mcp.add_server("filesystem", "npx",
-               ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"])
+               ["-y", "@modelcontextprotocol/server-filesystem", workspace])
 config_path = mcp.write_config_file()
 
 try:
-    session = await Session.create(ClaudeCLI(), mcp_config_path=config_path)
-    response = await session.send("List the files in /tmp.")
+    session = await Session.create(
+        ClaudeCLI(),
+        mcp_config_path=config_path,
+        tools=["mcp__filesystem__list_directory"],
+    )
+    response = await session.send(
+        f"Use mcp__filesystem__list_directory to list {workspace}."
+    )
     print(response.result)
 finally:
     mcp.cleanup()
