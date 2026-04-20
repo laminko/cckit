@@ -55,6 +55,102 @@ class TestACPClientHandlerRegistration:
         assert "session/update" in transport._notification_handlers
 
 
+class TestACPClientSessionFlow:
+    @pytest.mark.asyncio
+    async def test_initialize_with_capabilities(self) -> None:
+        client = _make_client()
+        async with client:
+            result = await client.initialize(
+                client_info={"name": "t", "version": "0.1"},
+                capabilities={"tools": True},
+            )
+            assert "capabilities" in result
+
+    @pytest.mark.asyncio
+    async def test_new_session_params_forwarded(self) -> None:
+        client = _make_client()
+        async with client:
+            await client.initialize()
+            sid = await client.new_session(
+                model="opus", system_prompt="short", cwd="/tmp"
+            )
+            assert sid == "sid-echo"
+            assert client.session_id == "sid-echo"
+
+    @pytest.mark.asyncio
+    async def test_new_session_handles_non_dict_result(
+        self, monkeypatch
+    ) -> None:
+        client = _make_client()
+        async with client:
+            await client.initialize()
+
+            async def fake_request(method, params=None, **kw):
+                return "not-a-dict"
+
+            monkeypatch.setattr(client._transport, "request", fake_request)
+            sid = await client.new_session()
+            assert sid == ""
+
+    @pytest.mark.asyncio
+    async def test_load_session_sets_id(self) -> None:
+        client = _make_client()
+        async with client:
+            await client.initialize()
+            result = await client.load_session("abc-sid")
+            assert result["loaded"] == "abc-sid"
+            assert client.session_id == "abc-sid"
+
+    @pytest.mark.asyncio
+    async def test_close_session_clears_id(self) -> None:
+        client = _make_client()
+        async with client:
+            await client.initialize()
+            await client.load_session("sid-x")
+            assert client.session_id == "sid-x"
+            await client.close_session()
+            assert client.session_id is None
+
+    @pytest.mark.asyncio
+    async def test_close_session_without_id_is_noop(self) -> None:
+        client = _make_client()
+        async with client:
+            await client.initialize()
+            await client.close_session()  # no active session — noop
+
+    @pytest.mark.asyncio
+    async def test_prompt_without_session_raises(self) -> None:
+        from cckit.utils.errors import SessionError
+
+        client = _make_client()
+        async with client:
+            with pytest.raises(SessionError, match="No active session"):
+                await client.prompt("hi")
+
+    @pytest.mark.asyncio
+    async def test_prompt_with_session(self) -> None:
+        client = _make_client()
+        async with client:
+            await client.initialize()
+            await client.load_session("sid-x")
+            await client.prompt("hello")  # should not raise
+
+    @pytest.mark.asyncio
+    async def test_cancel_with_session_notifies(self) -> None:
+        client = _make_client()
+        async with client:
+            await client.initialize()
+            await client.load_session("sid-x")
+            # Should not raise (fire-and-forget)
+            await client.cancel()
+
+    @pytest.mark.asyncio
+    async def test_cancel_without_session_noop(self) -> None:
+        client = _make_client()
+        async with client:
+            await client.cancel()
+
+
 class TestACPClientSessionUpdateCallbacks:
     @pytest.mark.asyncio
     async def test_on_session_update_callback(self) -> None:
@@ -92,6 +188,23 @@ class TestACPClientSessionUpdateCallbacks:
         client.remove_session_update(cb)
         client._handle_session_update({"type": "b"})
         assert len(received) == 1  # no new events
+
+    def test_remove_unregistered_callback_is_safe(self) -> None:
+        client = _make_client()
+        client.remove_session_update(lambda p: None)  # no raise
+
+    def test_callback_exception_is_swallowed(self) -> None:
+        client = _make_client()
+        good = []
+
+        def bad(_):
+            raise RuntimeError("callback fail")
+
+        client.on_session_update(bad)
+        client.on_session_update(lambda p: good.append(p))
+
+        client._handle_session_update({"type": "x"})
+        assert len(good) == 1  # good callback still fired
 
 
 class TestDefaultHandlers:
@@ -203,3 +316,102 @@ class TestDefaultHandlers:
             {"message": "Enter API key:"}
         )
         assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_permission_unknown_policy_fails_closed(self) -> None:
+        handlers = DefaultHandlers()
+        handlers.permission_policy = object()  # type: ignore[assignment]
+        result = await handlers.handle_permission({"tool_name": "Bash"})
+        assert result["approved"] is False
+        assert "unknown" in result["reason"].lower()
+
+    @pytest.mark.asyncio
+    async def test_permission_sync_callback(self) -> None:
+        handlers = DefaultHandlers(
+            permission_policy=PermissionPolicy.CALLBACK,
+            permission_callback=lambda p: {"approved": True, "reason": "ok"},
+        )
+        result = await handlers.handle_permission({"tool_name": "Read"})
+        assert result["approved"] is True
+
+    @pytest.mark.asyncio
+    async def test_file_read_too_large(self, tmp_path, monkeypatch) -> None:
+        target = tmp_path / "big.txt"
+        target.write_text("small")
+        monkeypatch.setattr("cckit.rpc.handlers.MAX_READ_SIZE", 1)
+
+        handlers = DefaultHandlers(workspace_root=tmp_path)
+        result = await handlers.handle_file_read({"path": str(target)})
+        assert "too large" in result["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_file_read_io_error(self, tmp_path) -> None:
+        target = tmp_path / "x.txt"
+        target.write_bytes(b"\xff\xfe\xfd")  # non-utf8 content
+
+        handlers = DefaultHandlers(workspace_root=tmp_path)
+        # Force exception by making read_text fail — we'll simulate with
+        # a directory marked as file-like through monkeypatching.
+        # Simpler: write valid content, but monkeypatch read_text to raise.
+        import cckit.rpc.handlers as mod
+
+        original = mod.Path.read_text
+
+        def boom(self, *a, **kw):  # type: ignore[no-untyped-def]
+            raise OSError("permission denied")
+
+        mod.Path.read_text = boom  # type: ignore[assignment]
+        try:
+            result = await handlers.handle_file_read({"path": str(target)})
+            assert "failed to read" in result["error"].lower()
+        finally:
+            mod.Path.read_text = original  # type: ignore[assignment]
+
+    @pytest.mark.asyncio
+    async def test_file_write_io_error(self, tmp_path) -> None:
+        import cckit.rpc.handlers as mod
+
+        handlers = DefaultHandlers(workspace_root=tmp_path)
+        target = tmp_path / "out.txt"
+
+        original = mod.Path.write_text
+
+        def boom(self, *a, **kw):  # type: ignore[no-untyped-def]
+            raise OSError("disk full")
+
+        mod.Path.write_text = boom  # type: ignore[assignment]
+        try:
+            result = await handlers.handle_file_write(
+                {"path": str(target), "content": "x"}
+            )
+            assert "failed to write" in result["error"].lower()
+        finally:
+            mod.Path.write_text = original  # type: ignore[assignment]
+
+    @pytest.mark.asyncio
+    async def test_file_read_empty_path(self) -> None:
+        handlers = DefaultHandlers()
+        result = await handlers.handle_file_read({"path": ""})
+        assert "empty path" in result["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_resolve_os_error_is_wrapped(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """Path.resolve(OSError) → returns {'error': ...} instead of crashing."""
+        import cckit.rpc.handlers as mod
+
+        # Build the handler first so __init__'s resolve() isn't intercepted
+        handlers = DefaultHandlers(workspace_root=tmp_path)
+
+        original_resolve = mod.Path.resolve
+
+        def boom(self, *a, **kw):  # type: ignore[no-untyped-def]
+            raise OSError("io fail")
+
+        mod.Path.resolve = boom  # type: ignore[assignment]
+        try:
+            result = await handlers.handle_file_read({"path": "/tmp/x"})
+            assert "cannot resolve" in result["error"].lower()
+        finally:
+            mod.Path.resolve = original_resolve  # type: ignore[assignment]

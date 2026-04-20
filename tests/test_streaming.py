@@ -6,10 +6,13 @@ import json
 import pytest
 
 from cckit.streaming.events import (
+    BaseEvent,
     MessageCompleteEvent,
+    MessageStartEvent,
     ResultEvent,
     SystemEvent,
     TextChunkEvent,
+    ToolResultEvent,
     ToolUseEvent,
 )
 from cckit.streaming.handler import StreamHandler
@@ -88,6 +91,85 @@ class TestParseLine:
         with pytest.raises(ParseError):
             parse_line("{not valid json}")
 
+    def test_message_start(self) -> None:
+        data = {"type": "message_start", "message": {"role": "assistant"}}
+        event = parse_line(json.dumps(data))
+        assert isinstance(event, MessageStartEvent)
+        assert event.role == "assistant"
+
+    def test_message_stop(self) -> None:
+        data = {"type": "message_stop"}
+        event = parse_line(json.dumps(data))
+        assert isinstance(event, MessageCompleteEvent)
+
+    def test_content_block_start_tool_use(self) -> None:
+        data = {
+            "type": "content_block_start",
+            "content_block": {
+                "type": "tool_use",
+                "name": "Bash",
+                "id": "tu_9",
+            },
+        }
+        event = parse_line(json.dumps(data))
+        assert isinstance(event, ToolUseEvent)
+        assert event.tool_name == "Bash"
+        assert event.tool_use_id == "tu_9"
+
+    def test_tool_result_string_content(self) -> None:
+        data = {
+            "type": "tool_result",
+            "tool_use_id": "tu_1",
+            "content": "stdout line",
+            "is_error": False,
+        }
+        event = parse_line(json.dumps(data))
+        assert isinstance(event, ToolResultEvent)
+        assert event.content == "stdout line"
+
+    def test_tool_result_list_content_flattens(self) -> None:
+        data = {
+            "type": "tool_result",
+            "tool_use_id": "tu_2",
+            "content": [
+                {"type": "text", "text": "line1"},
+                {"type": "text", "text": "line2"},
+                {"type": "other"},
+            ],
+        }
+        event = parse_line(json.dumps(data))
+        assert isinstance(event, ToolResultEvent)
+        assert "line1" in event.content
+        assert "line2" in event.content
+
+    def test_assistant_fallback_on_unknown_content(self) -> None:
+        data = {
+            "type": "assistant",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "unknown"}],
+            },
+        }
+        event = parse_line(json.dumps(data))
+        assert isinstance(event, TextChunkEvent)
+
+    def test_unknown_event_returns_base(self) -> None:
+        data = {"type": "totally_unknown"}
+        event = parse_line(json.dumps(data))
+        assert isinstance(event, BaseEvent)
+
+    def test_assistant_skips_non_dict_blocks(self) -> None:
+        data = {
+            "type": "assistant",
+            "message": {
+                "role": "assistant",
+                "content": ["not-a-dict", {"type": "text", "text": "ok"}],
+            },
+        }
+        event = parse_line(json.dumps(data))
+        assert isinstance(event, TextChunkEvent)
+        assert event.text == "ok"
+
 
 class TestStreamHandler:
     @pytest.mark.asyncio
@@ -152,3 +234,52 @@ class TestStreamHandler:
 
         assert len(events) == 1
         assert isinstance(events[0], ResultEvent)
+
+    @pytest.mark.asyncio
+    async def test_process_stream_skips_blank_lines(self) -> None:
+        lines = ["", "   ", json.dumps({"type": "system", "subtype": "init"})]
+
+        async def gen():
+            for line in lines:
+                yield line
+
+        handler = StreamHandler()
+        events = [e async for e in handler.process_stream(gen())]
+        assert len(events) == 1
+        assert isinstance(events[0], SystemEvent)
+
+    @pytest.mark.asyncio
+    async def test_process_stream_swallows_parse_errors(self) -> None:
+        lines = [
+            "{not valid json}",
+            json.dumps({"type": "result", "result": "ok", "session_id": "", "duration_ms": 0}),
+        ]
+
+        async def gen():
+            for line in lines:
+                yield line
+
+        handler = StreamHandler()
+        events = [e async for e in handler.process_stream(gen())]
+        # Bad line is dropped, good line yields ResultEvent
+        assert len(events) == 1
+
+    @pytest.mark.asyncio
+    async def test_collect_result_accumulates_usage(self) -> None:
+        from cckit.streaming.events import UsageEvent
+
+        async def gen():
+            yield UsageEvent(
+                input_tokens=10,
+                output_tokens=20,
+                cache_read_tokens=1,
+                cache_write_tokens=2,
+            )
+            yield TextChunkEvent(text="Hi")
+            # No result event — fall through to aggregated branch
+
+        handler = StreamHandler()
+        response = await handler.collect_result(gen())
+        assert response.result == "Hi"
+        assert response.usage.input_tokens == 10
+        assert response.usage.output_tokens == 20
