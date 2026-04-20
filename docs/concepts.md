@@ -10,22 +10,14 @@ The mental model behind `cckit`. Read this once and the rest of the API follows.
 - **Tool permissions, MCP servers, system prompts** are CLI flags, surfaced as Python kwargs.
 - **Two transport modes** for the subprocess — one-shot per call vs. one long-lived process — drive the library's two session types.
 
-## The three execution paths
+## Execution paths
 
-| | Subprocess model | Context across turns | Bidirectional callbacks | When to use |
-|---|---|---|---|---|
-| `CLI` | New subprocess per call | No | No | Scripts, one-off prompts |
-| `Session` | New subprocess per turn (uses `--resume`) | Yes | No | Multi-turn conversations without callbacks |
-| `ACPSession` | One long-lived subprocess, JSON-RPC 2.0 over stdio | Yes | Yes (permissions, file I/O, cancel) | Long sessions, interactive permissions, agent↔client callbacks |
+| | Subprocess model | Context across turns | When to use |
+|---|---|---|---|
+| `CLI` | New subprocess per call | No | Scripts, one-off prompts |
+| `Session` | New subprocess per turn (uses `--resume`) | Yes | Multi-turn conversations |
 
-### Picking between `Session` and `ACPSession`
-
-Both preserve context. The difference is what the *agent* can do while it's thinking:
-
-- `Session` is fire-and-forget per turn. The agent runs, streams output back, done.
-- `ACPSession` keeps the socket open, so the agent can call *back* into your code: ask permission before using a tool, read/write files through handlers you control, or be cancelled mid-prompt.
-
-If you don't need callbacks, `Session` is simpler and has fewer moving parts.
+**About `ACPSession`:** the library also ships an `ACPSession` class that speaks a bidirectional JSON-RPC 2.0 protocol over stdio (the "Agent Communication Protocol"). It was designed for agent→client callbacks — tool-use permission prompts, file read/write asks, cancellation mid-prompt. In practice, the current `claude` CLI (verified against v2.1.114) does **not** emit those callbacks; it speaks a one-way stream-json protocol. `ACPSession` therefore only behaves as advertised against an ACP-compatible mock or a third-party agent that implements the protocol. For everyday use, prefer `Session`.
 
 ## The `bare` flag
 
@@ -40,7 +32,7 @@ The consequence:
 
 So: **API-key users can leave the default**; **OAuth users must pass `bare=False`** on every entry point that accepts it.
 
-`ACPSession` does not accept a `bare` parameter — it uses the CLI's stream-json mode, which works with either auth method.
+`ACPSession` does not accept a `bare` parameter — it constructs its own invocation without `--bare`. Whether authentication succeeds depends on what the ACP server on the other end expects; see the caveat on `ACPSession` above.
 
 ## Streaming and events
 
@@ -70,36 +62,21 @@ Full event list:
 
 Non-streaming calls (`execute`, `send`) collect the stream internally and return a `Response` with the accumulated text and metadata.
 
-## Permission policies (ACP only)
+## Permission policies
 
-`ACPSession` gates tool use through a `PermissionPolicy`:
+`DefaultHandlers` (in `cckit.rpc`) implements three policies — `AUTO_DENY` (default), `AUTO_APPROVE`, `CALLBACK` — for responding to `session/request_permission` JSON-RPC requests from the agent. They fire only when something on the other end of the ACP transport actually sends those requests. The real `claude` binary does not, so these policies only matter against ACP-compatible mocks or third-party agents.
 
-- `AUTO_DENY` — default; every permission request is rejected. Safest.
-- `AUTO_APPROVE` — every permission request is accepted. Use in trusted scripts.
-- `CALLBACK` — you supply an async or sync callback; its return value becomes the response.
+For real tool gating against `claude`, use CLI-level flags instead:
 
-```python
-from cckit import ACPSession, PermissionPolicy
-from cckit.rpc import DefaultHandlers
+- `tools=["Read", "Grep", ...]` — explicit allowlist (maps to `--allowedTools`).
+- `disallowed_tools=["Bash"]` — explicit denylist (maps to `--disallowedTools`).
+- `permission_mode=PermissionMode.BYPASS_PERMISSIONS` — skip every gate (maps to `--permission-mode bypassPermissions`). Also available: `ACCEPT_EDITS`, `PLAN`, `DEFAULT`.
 
-def gate(params):
-    return {"approved": params["tool_name"] == "Read"}
+## Filesystem sandboxing
 
-# DefaultHandlers takes the callback; ACPSession.create takes only the policy.
-# For a callback policy, construct handlers directly and pass them via ACPClient.
-```
+When `DefaultHandlers` *does* receive `fs/read_text_file` or `fs/write_text_file` requests, it confines paths to a `workspace_root` (default `Path.cwd()`), rejects symlinks, and caps reads at 10 MiB. Override via `DefaultHandlers(workspace_root="/some/dir")`.
 
-See [guides.md → ACP with permission callbacks](./guides.md#acp-with-permission-callbacks) for the wiring.
-
-## Filesystem sandboxing (ACP only)
-
-When the agent calls back via `fs/read_text_file` or `fs/write_text_file`, `DefaultHandlers` confines those paths to a `workspace_root` (defaults to `Path.cwd()`):
-
-- Paths resolved outside `workspace_root` → rejected.
-- Symlinks → rejected.
-- Reads larger than 10 MiB → rejected.
-
-Override by constructing `DefaultHandlers(workspace_root="/some/dir")` yourself.
+As with permission policies, these handlers only fire against ACP-compatible peers — the real `claude` binary performs filesystem I/O inside its own process and does not ask the client for file contents.
 
 ## Tool names
 
