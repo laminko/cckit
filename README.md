@@ -56,7 +56,7 @@ asyncio.run(main())
 The library offers two execution paths plus one way to extend Claude with your own tools:
 
 - **One-shot (`CLI` / `Session`)** — spawns a fresh `claude` subprocess per call. Simple, good for scripts.
-- **Persistent (`ACPSession`)** — keeps a single `claude` subprocess alive and talks to it over JSON-RPC 2.0. Good for long conversations, permission prompts, and file callbacks.
+- **Persistent (`ACPSession`)** — keeps a single `claude` subprocess alive and speaks JSON-RPC 2.0 over stdio. **Note:** the real `claude` binary does not emit the callback messages `ACPSession` was designed for (permissions, file I/O, elicitation); those fire only against ACP-compatible mocks or third-party agents. See [docs/concepts.md](./docs/concepts.md#execution-paths). Prefer `Session` for everyday use.
 - **Custom tools (`FastMCP` + `MCPManager.add_python_server`)** — expose any Python function as a tool Claude can call. See [docs/custom-tools.md](./docs/custom-tools.md).
 
 ### One-shot execution
@@ -169,7 +169,7 @@ tools = ["mcp__my-tools__lookup_user"]
 
 ### ACP: persistent bidirectional sessions
 
-`ACPSession` keeps one `claude` subprocess alive and speaks JSON-RPC 2.0 over stdio (Agent Communication Protocol). This lets the agent call back into your code for permission checks, file reads, and file writes, and lets you cancel an in-flight prompt.
+`ACPSession` keeps one `claude` subprocess alive and speaks JSON-RPC 2.0 over stdio (Agent Communication Protocol). It was designed for agent→client callbacks — permission prompts, file reads/writes, mid-prompt cancellation. **The real `claude` CLI (verified against v2.1.114) does not emit those callbacks**; `ACPSession` behaves as designed only against ACP-compatible mocks or third-party agents. For everyday use with the real binary, prefer `Session`. See [docs/concepts.md](./docs/concepts.md#execution-paths) for the full story.
 
 ```python
 from cckit import ACPSession, PermissionPolicy, TextChunkEvent

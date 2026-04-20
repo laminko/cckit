@@ -343,6 +343,8 @@ DefaultHandlers(
 
 Handles agent→client requests: `session/request_permission`, `fs/read_text_file`, `fs/write_text_file`, `session/elicitation`. File I/O is confined to `workspace_root`, rejects symlinks, caps reads at 10 MiB.
 
+> **Note:** the real `claude` binary does not emit these requests (verified against v2.1.114); these handlers only fire against ACP-compatible mocks or third-party agents. See [concepts.md](./concepts.md#permission-policies).
+
 ---
 
 ## `cckit.streaming`

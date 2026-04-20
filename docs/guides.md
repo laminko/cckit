@@ -143,7 +143,7 @@ Register it with `MCPManager.add_python_server("my-tools", script="my_tools.py")
 
 ## Persistent ACP session
 
-`ACPSession` keeps one `claude` subprocess alive, enabling permissions, cancellation, and file callbacks.
+`ACPSession` keeps one `claude` subprocess alive over JSON-RPC 2.0. It was designed for permission prompts, file callbacks, and cancellation. **The real `claude` binary (v2.1.114) does not emit those callbacks** — `ACPSession` works as advertised only against an ACP-compatible mock or a third-party agent. See [concepts.md](./concepts.md#execution-paths).
 
 ```python
 from cckit import ACPSession, PermissionPolicy, TextChunkEvent
@@ -163,7 +163,9 @@ async with await ACPSession.create(
 
 ### ACP with permission callbacks
 
-To decide per-tool whether to approve, construct `DefaultHandlers` yourself and wire up a lower-level `ACPClient`.
+> **Note:** the code below only has effect against an ACP-compatible peer (the in-tree mock at `tests/fixtures/mock_acp_server.py`, or a third-party agent). The real `claude` binary does not emit `session/request_permission`, so the `gate` callback will never fire when this runs against `claude` itself. For real tool gating, use CLI-level `tools=`, `disallowed_tools=`, or `permission_mode=` instead.
+
+To decide per-tool whether to approve (against an ACP-compatible peer), construct `DefaultHandlers` yourself and wire up a lower-level `ACPClient`.
 
 ```python
 from cckit import ACPClient, PermissionPolicy, RpcTransport
