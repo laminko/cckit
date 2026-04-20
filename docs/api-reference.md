@@ -257,6 +257,22 @@ Immutable holder for one server's config: `name`, `command`, `args`, `env`. Prod
 Re-exported from [`mcp.server.fastmcp`](https://pypi.org/project/mcp/). Use it to define tools in your own Python file; the file then becomes a subprocess Claude calls over stdio.
 
 ```python
+FastMCP(name: str | None = None, *,
+        instructions: str | None = None,
+        ...)                                                      # many SDK-level kwargs; see the SDK for the full list
+
+@server.tool(name: str | None = None,                             # defaults to the function name
+             title: str | None = None,
+             description: str | None = None,
+             structured_output: bool | None = None) -> Callable   # decorator
+server.add_tool(fn, name=..., description=...) -> None            # imperative equivalent
+server.run(transport: "stdio" | "sse" | "streamable-http" = "stdio",
+           mount_path: str | None = None) -> None                 # run loop; stdio is what cckit invokes
+```
+
+Usage shape:
+
+```python
 from cckit import FastMCP
 
 server = FastMCP("my-tools")
@@ -269,7 +285,11 @@ if __name__ == "__main__":
     server.run()
 ```
 
-Parameter JSON schema is auto-generated from type hints. Async functions, Pydantic models, and raised exceptions all work as expected. See [`docs/custom-tools.md`](./custom-tools.md) for the full pattern.
+- **Schema auto-generation** — parameter JSON schema is derived from type hints; Pydantic models become nested object schemas.
+- **Async tools** — `async def` functions are awaited natively.
+- **Errors** — raised exceptions are converted into MCP error responses; no manual error envelope needed.
+
+See [`docs/custom-tools.md`](./custom-tools.md) for the full pattern and common pitfalls.
 
 ---
 

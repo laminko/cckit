@@ -53,10 +53,11 @@ asyncio.run(main())
 
 ## Core concepts
 
-The library offers two execution paths:
+The library offers two execution paths plus one way to extend Claude with your own tools:
 
 - **One-shot (`CLI` / `Session`)** — spawns a fresh `claude` subprocess per call. Simple, good for scripts.
 - **Persistent (`ACPSession`)** — keeps a single `claude` subprocess alive and talks to it over JSON-RPC 2.0. Good for long conversations, permission prompts, and file callbacks.
+- **Custom tools (`FastMCP` + `MCPManager.add_python_server`)** — expose any Python function as a tool Claude can call. See [docs/custom-tools.md](./docs/custom-tools.md).
 
 ### One-shot execution
 
@@ -198,7 +199,7 @@ cckit/
 ├── streaming/   # StreamHandler, parsers, typed Events
 ├── session/     # Session, ACPSession, ConversationManager, MessageHistory
 ├── agents/      # BaseAgent, CodeAgent, ResearchAgent, ConversationAgent, CustomAgent
-├── mcp/         # MCPServer, MCPManager
+├── mcp/         # MCPServer, MCPManager, FastMCP (authoring helper)
 ├── rpc/         # RpcTransport, ACPClient, DefaultHandlers, PermissionPolicy
 ├── types/       # Response, AgentResult, Message, Usage, OutputFormat, PermissionMode
 └── utils/       # errors (CckitError base + CLIError, AuthError, RpcError, TransportError, ...), helpers
@@ -218,6 +219,7 @@ uv run python examples/streaming_example.py
 uv run python examples/multi_turn_conversation.py
 uv run python examples/custom_agent.py
 uv run python examples/mcp_integration.py
+uv run python examples/mcp_custom_tool.py
 ```
 
 ## Credits

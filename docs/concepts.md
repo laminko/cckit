@@ -107,7 +107,7 @@ Tool kwargs (`tools=[...]`) are CLI tool identifiers, passed through verbatim. C
 
 - **Code**: `Read`, `Edit`, `Write`, `MultiEdit`, `Bash`, `Grep`, `Glob`
 - **Research**: `WebSearch`, `WebFetch`
-- **MCP**: `mcp__<server>__<tool>` (e.g. `mcp__filesystem__list_directory`)
+- **MCP**: `mcp__<server>__<tool>` (e.g. `mcp__filesystem__list_directory`). Write your own with [custom-tools.md](./custom-tools.md).
 
 The built-in agents (`CodeAgent`, `ResearchAgent`) bundle sensible tool sets; `CustomAgent` lets you pick your own.
 

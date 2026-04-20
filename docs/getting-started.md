@@ -74,5 +74,6 @@ If you see a `CLIError` about authentication, revisit step 2 — most first-run 
 |---|---|
 | Understand when to use `CLI` vs `Session` vs `ACPSession` | [concepts.md](./concepts.md) |
 | See working code for streaming, multi-turn, MCP, ACP | [guides.md](./guides.md) |
+| Write a custom tool Claude can call | [custom-tools.md](./custom-tools.md) |
 | Look up a specific class or method | [api-reference.md](./api-reference.md) |
 | Browse runnable examples | [`examples/`](../examples/) |
